@@ -1,0 +1,13 @@
+LOAD DATABASE
+     FROM sqlite:///./fitaccess.db
+     INTO postgresql://postgres.ixvfzpvbpkdjlotwjelp:Kels09037066684%40%24@ixvfzpvbpkdjlotwjelp.supabase.co:5432/postgres?sslmode=require
+
+ WITH data only,
+      workers = 4, concurrency = 1,
+      batch rows = 1000
+
+ SET work_mem to '64MB',
+     maintenance_work_mem to '128MB'
+
+ CAST type datetime to timestamp using current
+;
