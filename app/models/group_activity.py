@@ -78,8 +78,8 @@ class GroupPost(Base):
     
     # Relationships
     group = relationship("Group", back_populates="posts")
-    likes = relationship("GroupPostLike", back_populates="post", cascade="all, delete-orphan")
-    comments = relationship("GroupPostComment", back_populates="post", cascade="all, delete-orphan")
+    likes = relationship("GroupPostLike", cascade="all, delete-orphan")
+    comments = relationship("GroupPostComment", cascade="all, delete-orphan")
     # # user = relationship("User")  # Commented out to avoid import issues
 
 class GroupEvent(Base):
@@ -116,7 +116,6 @@ class GroupActivity(Base):
     # host = relationship("User", foreign_keys=[host_id])
     # activity = relationship("Activity", back_populates="group_activities")  # Commented out to avoid import issues
 
-
 class GroupPostLike(Base):
     __tablename__ = "group_post_likes"
     
@@ -141,5 +140,6 @@ class GroupPostComment(Base):
     
     # Relationships
     post = relationship("GroupPost", back_populates="comments")
+    # user = relationship("User")  # Commented out to avoid import issues
     # user = relationship("User")  # Commented out to avoid import issues
 

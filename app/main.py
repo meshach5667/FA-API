@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from app.db.database import Base, engine, get_db
 from app.api import (
     explore,
@@ -28,19 +27,12 @@ from app.api import (
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
 from app.api.rewards_seed import seed_rewards
-import os
 
 app = FastAPI(
     title="FitAccess API",
     description="Backend for FitAccess - Access Premium Gyms With One Pass",
     version="1.0.0"
 )
-
-# Create uploads directory if it doesn't exist
-os.makedirs("uploads", exist_ok=True)
-
-# Mount static files for uploaded images
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,

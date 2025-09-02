@@ -281,34 +281,3 @@ def generate_activity_qr_code(
     }
     
     return qr_data
-
-# Get members who joined an activity
-@router.get("/{activity_id}/members")
-def get_activity_members(
-    activity_id: int,
-    db: Session = Depends(get_db)
-):
-    try:
-        # Get all joins for this activity with user details
-        joins = db.query(ActivityJoin).filter(
-            ActivityJoin.activity_id == activity_id
-        ).all()
-        
-        members = []
-        for join in joins:
-            # Get user details for each join
-            user = db.query(User).filter(User.id == join.user_id).first()
-            if user:
-                members.append({
-                    "id": str(user.id),
-                    "name": f"{user.first_name} {user.last_name}",
-                    "email": user.email,
-                    "joined_date": join.joined_at.isoformat() if hasattr(join, 'joined_at') and join.joined_at else join.created_at.isoformat() if hasattr(join, 'created_at') else None,
-                    "avatar": None  # Add avatar URL if available
-                })
-        
-        return {"members": members, "total": len(members)}
-    except Exception as e:
-        print(f"Error fetching activity members: {e}")
-        # Return empty list if there's an error
-        return {"members": [], "total": 0}

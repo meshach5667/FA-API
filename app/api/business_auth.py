@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 from app.db.database import get_db
 from app.models.business import Business, BusinessProfile
 from app.schemas.business import (
@@ -11,16 +12,8 @@ from app.core.email import send_reset_email
 from app.api.deps import get_current_business
 from datetime import datetime, timedelta
 import secrets
-import os
-import shutil
-from pathlib import Path
-from typing import List
 
 router = APIRouter()
-
-# Create uploads directory if it doesn't exist
-UPLOAD_DIR = Path("uploads/business_images")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- Business Auth ---
 
@@ -139,19 +132,63 @@ def update_profile(
     if not db_profile:
         raise HTTPException(status_code=404, detail="Profile not found")
     
-    # Get the update data and handle it properly
-    update_data = profile.dict(exclude_unset=True)
-    print(f"Updating profile with data: {update_data}")
+    profile_data = profile.dict(exclude_unset=True)
+    print(f"Updating business profile for business {current_business.id} with data: {profile_data}")
     
-    for key, value in update_data.items():
-        if hasattr(db_profile, key):
-            setattr(db_profile, key, value)
+    # If name is being updated, also update the business_name in the Business table
+    if 'name' in profile_data:
+        new_name = profile_data['name'].strip() if profile_data['name'] else None
+        print(f"Business name update: current='{current_business.business_name}', new='{new_name}'")
+        
+        if not new_name:
+            raise HTTPException(status_code=400, detail="Business name cannot be empty")
+            
+        # Only check for duplicates if the name is actually changing
+        if new_name != current_business.business_name:
+            existing_business = db.query(Business).filter(
+                and_(
+                    Business.business_name == new_name,
+                    Business.id != current_business.id
+                )
+            ).first()
+            
+            if existing_business:
+                print(f"Business name '{new_name}' already taken by business ID {existing_business.id}")
+                # Suggest some alternatives
+                suggestions = [
+                    f"{new_name} Fitness",
+                    f"{new_name} Gym", 
+                    f"{new_name} Sports",
+                    f"The {new_name}",
+                    f"{new_name} Club"
+                ]
+                suggestions_text = ", ".join([f'"{s}"' for s in suggestions[:3]])
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Business name '{new_name}' is already taken. Try alternatives like: {suggestions_text}"
+                )
+            
+            # Update the business_name in the Business table
+            current_business.business_name = new_name
+            print(f"Updated business_name to '{new_name}'")
         else:
-            print(f"Warning: BusinessProfile model does not have attribute '{key}'")
+            print("Business name unchanged, skipping validation")
     
-    db.commit()
-    db.refresh(db_profile)
-    return db_profile
+    # Update the profile
+    try:
+        for key, value in profile_data.items():
+            setattr(db_profile, key, value)
+        
+        db.commit()
+        db.refresh(db_profile)
+        return db_profile
+    except Exception as e:
+        db.rollback()
+        print(f"Database error updating business profile: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not update profile: {str(e)}"
+        )
 
 @router.get("/profile/summary", response_model=BusinessProfileSummary)
 def get_business_profile_summary(
@@ -178,7 +215,7 @@ def get_business_profile_summary(
         address=profile.address,
         state=profile.state,
         country=profile.country,
-        logo_url=profile.logo_url,  # Fixed: was profile instead of profile.logo_url
+        logo_url=profile.logo_url,
         cac_number=profile.cac_number,
         membership_plans=profile.membership_plans,
         business_hours=profile.business_hours,
@@ -189,42 +226,3 @@ def get_business_profile_summary(
         created_year=created_year,
         created_month=created_month
     )
-
-# Image upload endpoint
-@router.post("/profile/upload-image")
-async def upload_business_image(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_business: Business = Depends(get_current_business)
-):
-    # Validate file type
-    if not file.content_type.startswith('image/'):
-        raise HTTPException(status_code=400, detail="File must be an image")
-    
-    # Create filename
-    import uuid
-    file_extension = file.filename.split('.')[-1] if file.filename else 'jpg'
-    filename = f"business_{current_business.id}_{uuid.uuid4()}.{file_extension}"
-    file_path = f"uploads/business_images/{filename}"
-    
-    # Save file
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    with open(file_path, "wb") as buffer:
-        content = await file.read()
-        buffer.write(content)
-    
-    # Get or create business profile
-    profile = db.query(BusinessProfile).filter_by(business_id=current_business.id).first()
-    if not profile:
-        profile = BusinessProfile(
-            business_id=current_business.id,
-            name=current_business.business_name,
-            email=current_business.email
-        )
-        db.add(profile)
-    
-    # Update logo URL
-    profile.logo_url = f"/{file_path}"
-    db.commit()
-    
-    return {"message": "Image uploaded successfully", "logo_url": profile.logo_url}

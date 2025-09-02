@@ -10,7 +10,7 @@ from app.schemas.group_activity import (
     GroupPostCreate, GroupPostOut,
     GroupEventCreate, GroupEventOut,
     GroupMemberOut, GroupJoinRequest,
-    GroupPostLikeOut, GroupPostLikeToggleResponse, GroupPostCommentCreate, GroupPostCommentOut
+    GroupPostLikeToggleResponse, GroupPostCommentCreate, GroupPostCommentOut
 )
 from app.api.deps import get_current_business, get_current_user
 
@@ -216,8 +216,8 @@ def create_group_post(
     db: Session = Depends(get_db),
     current_business = Depends(get_current_business)
 ):
-    """Create a new group post (for business users)"""
-    # Check if the group belongs to the current business
+    """Create a new group post"""
+    # Check if group exists and belongs to business
     group = db.query(Group).filter(
         and_(
             Group.id == group_id,
@@ -226,14 +226,18 @@ def create_group_post(
     ).first()
     
     if not group:
-        raise HTTPException(status_code=404, detail="Group not found or doesn't belong to your business")
+        raise HTTPException(status_code=404, detail="Group not found")
     
-    # Create post with business user as author (using negative ID to distinguish from regular users)
+    # Use negative business ID as user ID for business users
+    business_user_id = -current_business.id
+    
+    # Create the post
     post = GroupPost(
         group_id=group_id,
-        user_id=-current_business.id,  # Use negative business ID as user_id
+        user_id=business_user_id,
         content=post_data.content,
-        post_type=post_data.post_type
+        post_type=post_data.post_type if hasattr(post_data, 'post_type') else "text",
+        media_url=post_data.media_url if hasattr(post_data, 'media_url') else None
     )
     
     db.add(post)
@@ -262,46 +266,6 @@ def get_group_posts(
     return db.query(GroupPost).filter(
         GroupPost.group_id == group_id
     ).order_by(desc(GroupPost.created_at)).limit(limit).all()
-
-@router.delete("/{group_id}/posts/{post_id}")
-def delete_group_post(
-    group_id: int,
-    post_id: int,
-    db: Session = Depends(get_db),
-    current_business = Depends(get_current_business)
-):
-    """Delete a group post (for business users)"""
-    # Check if group exists and belongs to business
-    group = db.query(Group).filter(
-        and_(
-            Group.id == group_id,
-            Group.business_id == current_business.id
-        )
-    ).first()
-    
-    if not group:
-        raise HTTPException(status_code=404, detail="Group not found")
-    
-    # Get the post
-    post = db.query(GroupPost).filter(
-        and_(
-            GroupPost.id == post_id,
-            GroupPost.group_id == group_id
-        )
-    ).first()
-    
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-    
-    # Business owners can delete any post in their group
-    # Or check if it's a business-created post (negative user_id)
-    if post.user_id != -current_business.id and post.user_id > 0:
-        # This is a regular user post, business can still delete it since they own the group
-        pass
-    
-    db.delete(post)
-    db.commit()
-    return {"message": "Post deleted successfully"}
 
 # Group Post Likes
 @router.post("/{group_id}/posts/{post_id}/like", response_model=GroupPostLikeToggleResponse)
@@ -370,41 +334,6 @@ def toggle_post_like(
             like_id=new_like.id
         )
 
-@router.get("/{group_id}/posts/{post_id}/likes", response_model=List[GroupPostLikeOut])
-def get_post_likes(
-    group_id: int,
-    post_id: int,
-    db: Session = Depends(get_db),
-    current_business = Depends(get_current_business),
-    limit: int = Query(50, le=100)
-):
-    """Get likes for a post"""
-    # Check if group exists and belongs to business
-    group = db.query(Group).filter(
-        and_(
-            Group.id == group_id,
-            Group.business_id == current_business.id
-        )
-    ).first()
-    
-    if not group:
-        raise HTTPException(status_code=404, detail="Group not found")
-    
-    # Get the post
-    post = db.query(GroupPost).filter(
-        and_(
-            GroupPost.id == post_id,
-            GroupPost.group_id == group_id
-        )
-    ).first()
-    
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-    
-    return db.query(GroupPostLike).filter(
-        GroupPostLike.post_id == post_id
-    ).order_by(desc(GroupPostLike.created_at)).limit(limit).all()
-
 # Group Post Comments
 @router.post("/{group_id}/posts/{post_id}/comments", response_model=GroupPostCommentOut)
 def create_post_comment(
@@ -437,10 +366,13 @@ def create_post_comment(
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     
-    # Create comment with business user as author
+    # Use negative business ID as user ID for business users
+    business_user_id = -current_business.id
+    
+    # Create the comment
     comment = GroupPostComment(
         post_id=post_id,
-        user_id=-current_business.id,  # Use negative business ID as user_id
+        user_id=business_user_id,
         content=comment_data.content
     )
     
@@ -483,17 +415,17 @@ def get_post_comments(
     
     return db.query(GroupPostComment).filter(
         GroupPostComment.post_id == post_id
-    ).order_by(GroupPostComment.created_at).limit(limit).all()
+    ).order_by(desc(GroupPostComment.created_at)).limit(limit).all()
 
-@router.delete("/{group_id}/posts/{post_id}/comments/{comment_id}")
-def delete_post_comment(
+# Delete Group Post
+@router.delete("/{group_id}/posts/{post_id}")
+def delete_group_post(
     group_id: int,
     post_id: int,
-    comment_id: int,
     db: Session = Depends(get_db),
     current_business = Depends(get_current_business)
 ):
-    """Delete a comment on a group post"""
+    """Delete a group post (only by the business that owns the group)"""
     # Check if group exists and belongs to business
     group = db.query(Group).filter(
         and_(
@@ -505,28 +437,99 @@ def delete_post_comment(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     
-    # Get the comment
-    comment = db.query(GroupPostComment).filter(
+    # Get the post
+    post = db.query(GroupPost).filter(
         and_(
-            GroupPostComment.id == comment_id,
-            GroupPostComment.post_id == post_id
+            GroupPost.id == post_id,
+            GroupPost.group_id == group_id
         )
     ).first()
     
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
     
-    # Business owners can delete any comment in their group
-    # Or check if it's their own comment
-    if comment.user_id != -current_business.id and comment.user_id > 0:
-        # This is a regular user comment, business can still delete it since they own the group
-        pass
-    
-    # Update post comment count
-    post = db.query(GroupPost).filter(GroupPost.id == post_id).first()
-    if post:
-        post.comments_count = max(0, post.comments_count - 1)
-    
-    db.delete(comment)
+    # Delete the post (likes and comments will be deleted automatically due to cascade)
+    db.delete(post)
     db.commit()
-    return {"message": "Comment deleted successfully"}
+    
+    return {"message": "Post deleted successfully"}
+
+# Group Events
+@router.post("/{group_id}/events", response_model=GroupEventOut)
+def create_group_event(
+    group_id: int,
+    event_data: GroupEventCreate,
+    db: Session = Depends(get_db),
+    current_business = Depends(get_current_business),
+    current_user = Depends(get_current_user)
+):
+    """Create a new group event"""
+    # Check if user is a member with appropriate permissions
+    membership = db.query(GroupMember).filter(
+        and_(
+            GroupMember.group_id == group_id,
+            GroupMember.user_id == current_user.id,
+            GroupMember.status == "active"
+        )
+    ).first()
+    
+    if not membership or membership.role not in ["admin", "moderator"]:
+        raise HTTPException(status_code=403, detail="Must be a group admin or moderator to create events")
+    
+    event = GroupEvent(
+        group_id=group_id,
+        created_by=current_user.id,
+        **event_data.dict()
+    )
+    
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+@router.get("/{group_id}/events", response_model=List[GroupEventOut])
+def get_group_events(
+    group_id: int,
+    db: Session = Depends(get_db),
+    current_business = Depends(get_current_business),
+    upcoming_only: bool = Query(True, description="Show only upcoming events"),
+    limit: int = Query(20, le=50)
+):
+    """Get events from a group"""
+    group = db.query(Group).filter(
+        and_(
+            Group.id == group_id,
+            Group.business_id == current_business.id
+        )
+    ).first()
+    
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    
+    query = db.query(GroupEvent).filter(GroupEvent.group_id == group_id)
+    
+    if upcoming_only:
+        query = query.filter(GroupEvent.event_date >= datetime.now().date())
+    
+    return query.order_by(GroupEvent.event_date).limit(limit).all()
+
+@router.get("/my-groups", response_model=List[GroupOut])
+def get_my_groups(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+    status: str = Query("active", description="Membership status filter")
+):
+    """Get groups where current user is a member"""
+    memberships = db.query(GroupMember).filter(
+        and_(
+            GroupMember.user_id == current_user.id,
+            GroupMember.status == status
+        )
+    ).all()
+    
+    group_ids = [m.group_id for m in memberships]
+    
+    if not group_ids:
+        return []
+    
+    return db.query(Group).filter(Group.id.in_(group_ids)).all()

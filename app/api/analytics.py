@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func, desc, Integer
+from sqlalchemy import and_, func, desc
 from typing import List, Optional
 from datetime import datetime, date, timedelta
 from collections import defaultdict
@@ -198,47 +198,8 @@ def get_dashboard_metrics(
     users_growth = ((current_users - prev_users) / prev_users * 100) if prev_users > 0 else 0
     check_ins_growth = ((current_check_ins - prev_check_ins) / prev_check_ins * 100) if prev_check_ins > 0 else 0
     
-    # Top activities by bookings and joins (without date filter for better data)
-    top_activities_query = db.query(
-        Activity.id,
-        Activity.name,
-        Activity.activity_type,
-        func.count(Booking.id).label('booking_count'),
-        func.coalesce(Activity.join_count, 0).label('join_count')
-    ).outerjoin(
-        Booking, Activity.id == Booking.activity_id
-    ).filter(
-        Activity.business_id == current_business.id
-    ).group_by(
-        Activity.id, Activity.name, Activity.activity_type, Activity.join_count
-    ).order_by(
-        desc(func.count(Booking.id) + func.coalesce(Activity.join_count, 0))
-    ).limit(5).all()
-    
-    # If no activities with bookings/joins, get all activities from the business
-    if not top_activities_query:
-        top_activities_query = db.query(
-            Activity.id,
-            Activity.name,
-            Activity.activity_type,
-            func.cast(0, Integer).label('booking_count'),
-            func.coalesce(Activity.join_count, 0).label('join_count')
-        ).filter(
-            Activity.business_id == current_business.id
-        ).order_by(desc(Activity.created_at)).limit(5).all()
-    
-    top_activities_list = [
-        {
-            "id": activity.id,
-            "name": activity.name,
-            "type": activity.activity_type or "General",
-            "bookings": activity.booking_count,
-            "joins": activity.join_count,
-            "total_engagement": activity.booking_count + activity.join_count
-        }
-        for activity in top_activities_query
-    ]
-    
+    # Top activities by bookings (simplified)
+    top_activities_list = []
     top_locations_list = []
     peak_hours_list = []
     

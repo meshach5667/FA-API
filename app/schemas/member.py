@@ -46,9 +46,26 @@ class MemberPaymentOut(BaseModel):
     member_id: int
     amount: float
     paid_at: datetime
-    receipt_url: Optional[str]
+    receipt_url: Optional[str] = None
+    # Frontend compatibility fields
+    date: datetime
+    method: str = "Cash"  # Default payment method
+    status: str = "paid"  # All recorded payments are considered paid
 
     model_config = ConfigDict(from_attributes=True)
+
+    @classmethod
+    def from_orm_with_computed(cls, payment):
+        return cls(
+            id=payment.id,
+            member_id=payment.member_id,
+            amount=payment.amount,
+            paid_at=payment.paid_at,
+            receipt_url=payment.receipt_url,
+            date=payment.paid_at,  # Map paid_at to date
+            method="Cash",  # Default method
+            status="paid"  # All payments are paid
+        )
 
 class MemberInvoiceCreate(BaseModel):
     amount: float

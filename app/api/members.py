@@ -58,26 +58,26 @@ def update_member(
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
     
-    # Get the update data and handle it properly
+    # Debug: log the update data
     update_data = member_update.dict(exclude_unset=True)
     print(f"Updating member {member_id} with data: {update_data}")
     
+    # For now, let's temporarily disable strict validation to see what's causing the 422 error
+    # We'll apply the updates and let the database constraints handle validation
     try:
         for key, value in update_data.items():
-            if hasattr(member, key):
-                setattr(member, key, value)
-                print(f"Updated {key} to {value}")
-            else:
-                print(f"Warning: Member model does not have attribute '{key}'")
+            setattr(member, key, value)
         
         db.commit()
         db.refresh(member)
-        print(f"Member {member_id} updated successfully")
         return member
     except Exception as e:
-        print(f"Error updating member: {str(e)}")
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to update member: {str(e)}")
+        print(f"Database error updating member {member_id}: {str(e)}")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not update member: {str(e)}"
+        )
 
 @router.delete("/{member_id}")
 def delete_member(
@@ -103,12 +103,19 @@ def add_payment(
     member = db.query(Member).filter(Member.id == member_id, Member.business_id == current_business.id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
+    
+    # Create the payment
     db_payment = MemberPayment(member_id=member.id, amount=payment.amount)
     db.add(db_payment)
+    
+    # Update member status when payment is made
+    member.payment_status = "paid"
+    member.membership_status = "active"
+    
     db.commit()
     db.refresh(db_payment)
     # TODO: Generate receipt and send via WhatsApp or email here
-    return db_payment
+    return MemberPaymentOut.from_orm_with_computed(db_payment)
 
 @router.get("/{member_id}/payments", response_model=List[MemberPaymentOut])
 def list_payments(
@@ -119,7 +126,10 @@ def list_payments(
     member = db.query(Member).filter(Member.id == member_id, Member.business_id == current_business.id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
-    return db.query(MemberPayment).filter(MemberPayment.member_id == member.id).all()
+    
+    payments = db.query(MemberPayment).filter(MemberPayment.member_id == member.id).all()
+    # Return payments with computed fields for frontend compatibility
+    return [MemberPaymentOut.from_orm_with_computed(payment) for payment in payments]
 
 # Invoices
 @router.post("/{member_id}/invoices", response_model=MemberInvoiceOut)
@@ -163,9 +173,18 @@ def update_invoice_status(
     ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    
     invoice.is_paid = status.is_paid
     invoice.paid_at = status.paid_at or (datetime.utcnow() if status.is_paid else None)
     invoice.receipt_url = status.receipt_url
+    
+    # If invoice is marked as paid, update member status
+    if status.is_paid:
+        member = db.query(Member).filter(Member.id == invoice.member_id).first()
+        if member:
+            member.payment_status = "paid"
+            member.membership_status = "active"
+    
     db.commit()
     db.refresh(invoice)
     return invoice
