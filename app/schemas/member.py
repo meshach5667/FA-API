@@ -14,18 +14,18 @@ class MemberCreate(BaseModel):
     emergency_contact_relationship: str
 
 class MemberUpdate(BaseModel):
-    first_name: Optional[str]
-    last_name: Optional[str]
-    email: Optional[EmailStr]
-    phone: Optional[str]
-    date_of_birth: Optional[date]
-    membership_type: Optional[str]
-    emergency_contact_name: Optional[str]
-    emergency_contact_phone: Optional[str]
-    emergency_contact_relationship: Optional[str]
-    is_active: Optional[bool]
-    payment_status: Optional[str]  # "paid", "unpaid", "overdue"
-    membership_status: Optional[str]  # "active", "inactive", "suspended", "expired"
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    date_of_birth: Optional[date] = None
+    membership_type: Optional[str] = None
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    emergency_contact_relationship: Optional[str] = None
+    is_active: Optional[bool] = None
+    payment_status: Optional[str] = None  # "paid", "unpaid", "overdue"
+    membership_status: Optional[str] = None  # "active", "inactive", "suspended", "expired"
 
 class MemberOut(MemberCreate):
     id: int
@@ -40,31 +40,46 @@ class MemberOut(MemberCreate):
 
 class MemberPaymentCreate(BaseModel):
     amount: float
+    payment_method: Optional[str] = "card"
 
 class MemberPaymentOut(BaseModel):
     id: int
     member_id: int
     amount: float
     paid_at: datetime
+    payment_method: Optional[str] = "card"
     receipt_url: Optional[str] = None
     # Frontend compatibility fields
     date: datetime
-    method: str = "Cash"  # Default payment method
+    method: str = "card"  # Default payment method
     status: str = "paid"  # All recorded payments are considered paid
+    # Member info for display
+    member: Optional[dict] = None
 
     model_config = ConfigDict(from_attributes=True)
 
     @classmethod
     def from_orm_with_computed(cls, payment):
+        member_info = None
+        if hasattr(payment, 'member') and payment.member:
+            member_info = {
+                "id": payment.member.id,
+                "first_name": payment.member.first_name,
+                "last_name": payment.member.last_name,
+                "full_name": f"{payment.member.first_name} {payment.member.last_name}"
+            }
+        
         return cls(
             id=payment.id,
             member_id=payment.member_id,
             amount=payment.amount,
             paid_at=payment.paid_at,
+            payment_method=getattr(payment, 'payment_method', 'card'),
             receipt_url=payment.receipt_url,
             date=payment.paid_at,  # Map paid_at to date
-            method="Cash",  # Default method
-            status="paid"  # All payments are paid
+            method=getattr(payment, 'payment_method', 'card'),  # Use actual payment method
+            status="paid",  # All payments are paid
+            member=member_info
         )
 
 class MemberInvoiceCreate(BaseModel):

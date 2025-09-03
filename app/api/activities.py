@@ -281,3 +281,57 @@ def generate_activity_qr_code(
     }
     
     return qr_data
+
+# Get activity members (participants)
+@router.get("/{activity_id}/members")
+def get_activity_members(
+    activity_id: int,
+    db: Session = Depends(get_db)
+):
+    from app.models.member import Member
+    
+    activity = db.query(Activity).filter(Activity.id == activity_id).first()
+    if not activity:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    
+    # Get members who joined this activity
+    activity_joins = db.query(ActivityJoin).filter(ActivityJoin.activity_id == activity_id).all()
+    
+    members = []
+    for join in activity_joins:
+        if join.user_id:
+            # If it's a user join
+            user = db.query(User).filter(User.id == join.user_id).first()
+            if user:
+                members.append({
+                    "id": user.id,
+                    "name": user.full_name,
+                    "email": user.email,
+                    "type": "user",
+                    "joined_at": join.created_at
+                })
+        elif join.member_id:
+            # If it's a member join
+            member = db.query(Member).filter(Member.id == join.member_id).first()
+            if member:
+                members.append({
+                    "id": member.id,
+                    "name": member.full_name,
+                    "email": member.email,
+                    "phone": member.phone,
+                    "type": "member",
+                    "joined_at": join.created_at,
+                    "is_active": member.is_active
+                })
+    
+    return {
+        "activity": {
+            "id": activity.id,
+            "name": activity.name,
+            "date": activity.date,
+            "time": activity.time,
+            "location": activity.location
+        },
+        "members": members,
+        "total_members": len(members)
+    }

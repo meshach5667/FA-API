@@ -4,6 +4,8 @@ from typing import Optional
 
 class CheckOutRequest(BaseModel):
     center_id: int
+    member_id: Optional[int] = None
+    user_id: Optional[int] = None
 
 class CheckOutQRCodeResponse(BaseModel):
     message: str

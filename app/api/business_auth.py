@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
+from typing import List
 from app.db.database import get_db
 from app.models.business import Business, BusinessProfile
 from app.schemas.business import (
@@ -226,3 +227,113 @@ def get_business_profile_summary(
         created_year=created_year,
         created_month=created_month
     )
+
+@router.post("/profile/upload-image")
+async def upload_profile_image(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_business: Business = Depends(get_current_business)
+):
+    """Upload a single business profile image (replaces existing)"""
+    import os
+    import uuid
+    
+    # Check if profile exists
+    db_profile = db.query(BusinessProfile).filter_by(business_id=current_business.id).first()
+    if not db_profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image files are allowed")
+    
+    
+    # Create upload directory if it doesn't exist
+    upload_dir = "uploads/business_profiles"
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    try:
+        # Delete existing image if it exists
+        if db_profile.logo_url:
+            try:
+                old_file_path = db_profile.logo_url.replace("/uploads/", "uploads/")
+                if os.path.exists(old_file_path):
+                    os.remove(old_file_path)
+            except Exception as e:
+                print(f"Warning: Could not delete old image: {e}")
+        
+        # Generate unique filename
+        file_extension = file.filename.split(".")[-1] if file.filename else "jpg"
+        unique_filename = f"{current_business.id}_{uuid.uuid4().hex}.{file_extension}"
+        file_path = os.path.join(upload_dir, unique_filename)
+        
+        # Save file
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        # Create URL (relative path that can be served by FastAPI)
+        file_url = f"/uploads/business_profiles/{unique_filename}"
+        
+        # Update profile with new image URL (using logo_url field for single image)
+        db_profile.logo_url = file_url
+        db.commit()
+        db.refresh(db_profile)
+        
+        return {
+            "message": "Successfully uploaded profile image",
+            "image_url": file_url
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@router.delete("/profile/image")
+def delete_profile_image(
+    db: Session = Depends(get_db),
+    current_business: Business = Depends(get_current_business)
+):
+    """Delete the business profile image"""
+    import os
+    
+    db_profile = db.query(BusinessProfile).filter_by(business_id=current_business.id).first()
+    if not db_profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    if not db_profile.logo_url:
+        raise HTTPException(status_code=404, detail="No image found")
+    
+    # Get the image URL to delete
+    image_url = db_profile.logo_url
+    
+    try:
+        # Delete the physical file
+        if image_url.startswith("/uploads/"):
+            file_path = image_url[1:]  # Remove leading slash
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        
+        # Clear the logo_url in database
+        db_profile.logo_url = None
+        db.commit()
+        
+        return {
+            "message": "Profile image deleted successfully"
+        }
+        file_path = image_url[1:]  # Remove leading slash
+        if os.path.exists(file_path):
+                os.remove(file_path)
+        
+        # Update database
+        db_profile.pictures = updated_pictures
+        db.commit()
+        
+        return {
+            "message": "Image deleted successfully",
+            "remaining_images": updated_pictures
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")

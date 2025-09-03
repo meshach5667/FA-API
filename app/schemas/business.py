@@ -61,8 +61,21 @@ class BusinessProfileBase(BaseModel):
 class BusinessProfileCreate(BusinessProfileBase):
     pass
 
-class BusinessProfileUpdate(BusinessProfileBase):
-    pass
+class BusinessProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    logo_url: Optional[str] = None
+    pictures: Optional[List[str]] = None  # Up to 5 picture URLs
+    cac_number: Optional[str] = None
+    membership_plans: Optional[List[MembershipPlan]] = None
+    business_hours: Optional[Dict[str, BusinessHour]] = None
+    description: Optional[str] = None
+    longitude: Optional[float] = None   
+    latitude: Optional[float] = None
 
 class BusinessProfileOut(BusinessProfileBase):
     id: int

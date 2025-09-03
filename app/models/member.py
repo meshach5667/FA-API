@@ -30,6 +30,7 @@ class MemberPayment(Base):
     member_id = Column(Integer, ForeignKey("members.id"))
     amount = Column(Float, nullable=False)
     paid_at = Column(DateTime, default=datetime.utcnow)
+    payment_method = Column(String, default="card")  # "card", "cash", "transfer", etc.
     receipt_url = Column(String, nullable=True)  # Optional: link to PDF/image receipt
 
     member = relationship("Member", back_populates="payments")

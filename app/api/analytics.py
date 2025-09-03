@@ -20,6 +20,39 @@ from app.api.deps import get_current_business, get_current_user
 
 router = APIRouter()
 
+# Test endpoint without authentication
+@router.get("/test")
+def test_analytics_data(db: Session = Depends(get_db)):
+    """Test endpoint to check analytics data without auth"""
+    try:
+        from app.models.member import MemberPayment
+        
+        # Get all payments and members for testing
+        payments = db.query(MemberPayment).all()
+        members = db.query(Member).all()
+        
+        total_revenue = sum(float(p.amount) for p in payments) if payments else 0
+        total_transactions = len(payments)
+        total_members = len(members)
+        active_members = len([m for m in members if m.is_active])
+        
+        return {
+            "total_revenue": total_revenue,
+            "total_transactions": total_transactions,
+            "total_members": total_members,
+            "active_members": active_members,
+            "payments": [
+                {
+                    "id": p.id,
+                    "amount": float(p.amount),
+                    "member_name": f"{p.member.first_name} {p.member.last_name}" if p.member else "Unknown",
+                    "date": str(p.paid_at) if hasattr(p, 'paid_at') else str(p.payment_date)
+                } for p in payments[:5]  # Show first 5 payments
+            ]
+        }
+    except Exception as e:
+        return {"error": str(e), "message": "Failed to get analytics data"}
+
 # Event Tracking
 @router.post("/events", response_model=AnalyticsEventOut)
 def track_event(
@@ -73,38 +106,27 @@ def get_dashboard_metrics(
     db: Session = Depends(get_db),
     current_business = Depends(get_current_business)
 ):
-    """Get key metrics for the analytics dashboard"""
+    """Get key metrics for the analytics dashboard using real transaction data"""
+    from app.models.member import MemberPayment
+    
     end_date = date.today()
     start_date = end_date - timedelta(days=period_days)
     
-    # Previous period for comparison
-    prev_end_date = start_date - timedelta(days=1)
-    prev_start_date = prev_end_date - timedelta(days=period_days)
-    
-    # Current period metrics
-    current_revenue = db.query(func.sum(Payment.amount)).filter(
+    # Current period metrics - Use Member Payments as transactions and revenue
+    current_revenue = db.query(func.sum(MemberPayment.amount)).join(Member).filter(
         and_(
-            Payment.business_id == current_business.id,
-            func.date(Payment.created_at) >= start_date,
-            func.date(Payment.created_at) <= end_date,
-            Payment.status == "completed"
+            Member.business_id == current_business.id,
+            func.date(MemberPayment.paid_at) >= start_date,
+            func.date(MemberPayment.paid_at) <= end_date
         )
     ).scalar() or 0.0
     
-    current_bookings = db.query(func.count(Booking.id)).filter(
+    # Count member payments as transactions
+    current_transactions = db.query(func.count(MemberPayment.id)).join(Member).filter(
         and_(
-            Booking.business_id == current_business.id,
-            func.date(Booking.created_at) >= start_date,
-            func.date(Booking.created_at) <= end_date
-        )
-    ).scalar() or 0
-    
-    current_users = db.query(func.count(func.distinct(AnalyticsEvent.user_id))).filter(
-        and_(
-            AnalyticsEvent.business_id == current_business.id,
-            func.date(AnalyticsEvent.event_timestamp) >= start_date,
-            func.date(AnalyticsEvent.event_timestamp) <= end_date,
-            AnalyticsEvent.user_id.isnot(None)
+            Member.business_id == current_business.id,
+            func.date(MemberPayment.paid_at) >= start_date,
+            func.date(MemberPayment.paid_at) <= end_date
         )
     ).scalar() or 0
     
@@ -117,7 +139,7 @@ def get_dashboard_metrics(
         )
     ).scalar() or 0
     
-    # Member statistics
+    # Member statistics - Real data
     total_members = db.query(func.count(Member.id)).filter(
         Member.business_id == current_business.id
     ).scalar() or 0
@@ -125,7 +147,7 @@ def get_dashboard_metrics(
     active_members = db.query(func.count(Member.id)).filter(
         and_(
             Member.business_id == current_business.id,
-            func.date(Member.created_at) >= start_date - timedelta(days=90)  # Active in last 90 days
+            Member.membership_status == "active"
         )
     ).scalar() or 0
     
@@ -137,90 +159,93 @@ def get_dashboard_metrics(
         )
     ).scalar() or 0
     
-    # Payment status statistics
-    paid_invoices = db.query(func.count(MemberInvoice.id)).filter(
-        and_(
-            MemberInvoice.is_paid == True,
-            MemberInvoice.member_id == Member.id,
-            Member.business_id == current_business.id,
-            func.date(MemberInvoice.paid_at) >= start_date,
-            func.date(MemberInvoice.paid_at) <= end_date
-        )
-    ).scalar() or 0
-    
-    pending_payments = db.query(func.count(MemberInvoice.id)).filter(
-        and_(
-            MemberInvoice.is_paid == False,
-            MemberInvoice.member_id == Member.id,
-            Member.business_id == current_business.id
-        )
-    ).scalar() or 0
-    
-    # Previous period metrics for growth calculation
-    prev_revenue = db.query(func.sum(Payment.amount)).filter(
-        and_(
-            Payment.business_id == current_business.id,
-            func.date(Payment.created_at) >= prev_start_date,
-            func.date(Payment.created_at) <= prev_end_date,
-            Payment.status == "completed"
-        )
-    ).scalar() or 0.0
-    
-    prev_bookings = db.query(func.count(Booking.id)).filter(
-        and_(
-            Booking.business_id == current_business.id,
-            func.date(Booking.created_at) >= prev_start_date,
-            func.date(Booking.created_at) <= prev_end_date
-        )
-    ).scalar() or 0
-    
-    prev_users = db.query(func.count(func.distinct(AnalyticsEvent.user_id))).filter(
-        and_(
-            AnalyticsEvent.business_id == current_business.id,
-            func.date(AnalyticsEvent.event_timestamp) >= prev_start_date,
-            func.date(AnalyticsEvent.event_timestamp) <= prev_end_date,
-            AnalyticsEvent.user_id.isnot(None)
-        )
-    ).scalar() or 0
-    
-    prev_check_ins = db.query(func.count(AnalyticsEvent.id)).filter(
+    # Real peak hours data from check-ins
+    peak_hours_data = db.query(
+        func.extract('hour', AnalyticsEvent.event_timestamp).label('hour'),
+        func.count(AnalyticsEvent.id).label('count')
+    ).filter(
         and_(
             AnalyticsEvent.business_id == current_business.id,
             AnalyticsEvent.event_type == "check_in",
-            func.date(AnalyticsEvent.event_timestamp) >= prev_start_date,
-            func.date(AnalyticsEvent.event_timestamp) <= prev_end_date
+            func.date(AnalyticsEvent.event_timestamp) >= start_date,
+            func.date(AnalyticsEvent.event_timestamp) <= end_date
         )
-    ).scalar() or 0
+    ).group_by(func.extract('hour', AnalyticsEvent.event_timestamp)).all()
     
-    # Calculate growth rates
-    revenue_growth = ((current_revenue - prev_revenue) / prev_revenue * 100) if prev_revenue > 0 else 0
-    bookings_growth = ((current_bookings - prev_bookings) / prev_bookings * 100) if prev_bookings > 0 else 0
-    users_growth = ((current_users - prev_users) / prev_users * 100) if prev_users > 0 else 0
-    check_ins_growth = ((current_check_ins - prev_check_ins) / prev_check_ins * 100) if prev_check_ins > 0 else 0
+    # Format peak hours data
+    peak_hours_list = [
+        {"hour": f"{int(hour):02d}:00", "count": count}
+        for hour, count in peak_hours_data
+    ]
     
-    # Top activities by bookings (simplified)
-    top_activities_list = []
-    top_locations_list = []
-    peak_hours_list = []
+    # If no check-in data, use default structure
+    if not peak_hours_list:
+        peak_hours_list = []
     
     return DashboardMetrics(
         total_revenue=current_revenue,
-        total_bookings=current_bookings,
-        total_users=current_users,
+        total_transactions=current_transactions,
         total_check_ins=current_check_ins,
-        revenue_growth=revenue_growth,
-        bookings_growth=bookings_growth,
-        users_growth=users_growth,
-        check_ins_growth=check_ins_growth,
         total_members=total_members,
         active_members=active_members,
         new_members=new_members,
-        paid_invoices=paid_invoices,
-        pending_payments=pending_payments,
-        top_activities=top_activities_list,
-        top_user_locations=top_locations_list,
         peak_usage_hours=peak_hours_list
     )
+
+# Debug endpoint to check recent payments
+@router.get("/debug/payments")
+def debug_recent_payments(
+    db: Session = Depends(get_db),
+    current_business = Depends(get_current_business)
+):
+    """Debug endpoint to check recent member payments"""
+    from app.models.member import MemberPayment
+    
+    # Get recent payments from last 30 days
+    end_date = date.today()
+    start_date = end_date - timedelta(days=30)
+    
+    recent_payments = db.query(MemberPayment).join(Member).filter(
+        and_(
+            Member.business_id == current_business.id,
+            func.date(MemberPayment.paid_at) >= start_date,
+            func.date(MemberPayment.paid_at) <= end_date
+        )
+    ).limit(10).all()
+    
+    payments_data = []
+    for payment in recent_payments:
+        payments_data.append({
+            "id": payment.id,
+            "amount": float(payment.amount),
+            "paid_at": payment.paid_at,
+            "payment_method": payment.payment_method,
+            "member_id": payment.member_id,
+            "member_name": payment.member.full_name if payment.member else None
+        })
+    
+    total_revenue = db.query(func.sum(MemberPayment.amount)).join(Member).filter(
+        and_(
+            Member.business_id == current_business.id,
+            func.date(MemberPayment.paid_at) >= start_date,
+            func.date(MemberPayment.paid_at) <= end_date
+        )
+    ).scalar() or 0.0
+    
+    total_transactions = db.query(func.count(MemberPayment.id)).join(Member).filter(
+        and_(
+            Member.business_id == current_business.id,
+            func.date(MemberPayment.paid_at) >= start_date,
+            func.date(MemberPayment.paid_at) <= end_date
+        )
+    ).scalar() or 0
+    
+    return {
+        "total_revenue": float(total_revenue),
+        "total_transactions": total_transactions,
+        "recent_payments": payments_data,
+        "business_id": current_business.id
+    }
 
 @router.get("/metrics", response_model=List[BusinessMetricsOut])
 def get_business_metrics(

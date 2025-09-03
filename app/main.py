@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from app.db.database import Base, engine, get_db
 from app.api import (
     explore,
@@ -64,6 +65,9 @@ app.include_router(schedule.router, prefix="/schedule", tags=["Schedule"])
 app.include_router(transaction.router, prefix="/transaction", tags=["Transaction"])
 app.include_router(groups.router, prefix="/groups", tags=["Groups"])
 app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
+
+# Serve static files for uploaded images
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # app.include_router(payment.router, prefix="/payment", tags=["Payment"])
 # app.include_router(members.router, prefix="/members", tags=["Members"])

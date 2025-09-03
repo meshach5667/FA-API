@@ -46,22 +46,13 @@ class BusinessMetricsOut(BaseModel):
 # Dashboard Analytics
 class DashboardMetrics(BaseModel):
     total_revenue: float
-    total_bookings: int
-    total_users: int
+    total_transactions: int  # Changed from total_bookings to total_transactions
     total_check_ins: int
-    revenue_growth: float
-    bookings_growth: float
-    users_growth: float
-    check_ins_growth: float
     # Member statistics
     total_members: int = 0
     active_members: int = 0
     new_members: int = 0
-    paid_invoices: int = 0
-    pending_payments: int = 0
-    # Analytics
-    top_activities: List[Dict[str, Any]] = []
-    top_user_locations: List[Dict[str, Any]] = []
+    # Real-time data
     peak_usage_hours: List[Dict[str, Any]] = []
 
 # Revenue Analytics
