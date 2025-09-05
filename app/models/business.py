@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Float, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, DateTime, Float, ForeignKey, JSON, Boolean
 from sqlalchemy.orm import relationship
 from app.db.database import Base
 from datetime import datetime
@@ -9,14 +9,18 @@ class Business(Base):
 
     id = Column(Integer, primary_key=True)
     business_name = Column(String(100), unique=True)
+    name = Column(String(100))  # Add name field
     email = Column(String(100), unique=True, index=True)
     password_hash = Column(String(200))
     phone = Column(String(20))
+    phone_number = Column(String(20))  # Add phone_number field
     address = Column(String(200))
     reset_token = Column(String(100), nullable=True)
     reset_token_expires = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     balance = Column(Float, default=0.0)  # Add this field
+    is_active = Column(Boolean, default=True)  # Add is_active field
     
     # Relationships - temporarily commented out to fix startup issues
     # payments = relationship("Payment", back_populates="business")
@@ -36,6 +40,16 @@ class Business(Base):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+    
+    def get_initials(self):
+        """Generate initials from business name"""
+        name_to_use = self.name or self.business_name
+        if not name_to_use:
+            return "BZ"  # Default for Business
+        parts = name_to_use.strip().split()
+        if len(parts) == 1:
+            return parts[0][:2].upper()
+        return (parts[0][0] + parts[-1][0]).upper()
 
 class BusinessProfile(Base):
     __tablename__ = "business_profiles"

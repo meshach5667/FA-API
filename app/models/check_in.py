@@ -8,13 +8,14 @@ class CheckIn(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    member_id = Column(Integer, ForeignKey("members.id"), nullable=True)
-    center_id = Column(Integer, ForeignKey("centers.id"), nullable=False)
+    member_id = Column(Integer, nullable=True)  # Remove foreign key constraint for now
+    center_id = Column(Integer, nullable=True)  # Remove foreign key constraint for now
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=True)  # Add business_id
     check_in_time = Column(DateTime, default=datetime.utcnow)
     timestamp = Column(DateTime, default=datetime.utcnow)  # Keep for compatibility
+    tokens_used = Column(Integer, default=0)  # Add tokens_used field
     status = Column(String, default="active")  # active, completed
 
-    # Relationships
-    user = relationship("User", foreign_keys=[user_id])
-    member = relationship("Member", foreign_keys=[member_id])
-    # center = relationship("Center")  # Commented out to avoid startup errors
+    # Relationships - commented out to avoid startup errors
+    # user = relationship("User", foreign_keys=[user_id])
+    # business = relationship("Business")

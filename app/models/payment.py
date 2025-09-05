@@ -40,7 +40,7 @@ class Payment(Base):
     payment_metadata = Column(String, nullable=True)  # JSON string for additional data
     
     # Approval workflow
-    approved_by = Column(Integer, ForeignKey("admins.id"), nullable=True)
+    approved_by = Column(Integer, nullable=True)  # Temporarily removed FK constraint
     approved_at = Column(DateTime, nullable=True)
     
     # Timestamps

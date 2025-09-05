@@ -21,7 +21,7 @@ from app.models.transaction import Transaction
 from app.models.token import Token
 from app.models.reward import Reward
 from app.models.notification import Notification
-from app.schemas.admin import AdminCreate, AdminOut, AdminLogin
+from app.schemas.admin import AdminCreate, AdminOut, AdminLogin, AdminUpdate
 from app.models.admin import Admin
 from app.schemas.user import UserOut
 from app.schemas.business import BusinessOut, BusinessCreate
@@ -37,11 +37,11 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="admin/login")
 
 # Add this to your existing dependencies
-async def get_current_super_admin(
+async def get_current_admin(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ) -> Admin:
-    """Verify the admin is a super admin"""
+    """Verify the admin token and return admin"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -61,28 +61,107 @@ async def get_current_super_admin(
             status_code=404,
             detail="Admin not found"
         )
+    
+    if not admin.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin account is inactive"
+        )
+    
+    if not admin.is_approved():
+        raise HTTPException(
+            status_code=403,
+            detail="Admin account is not approved"
+        )
+    
     return admin
 
-# Admin Authentication endpoints
-@router.post("/signup", response_model=AdminOut)
-async def create_admin(
-    admin: AdminCreate,
-    db: Session = Depends(get_db),
-    current_admin: Admin = Depends(get_current_super_admin)
+async def get_current_super_admin(
+    current_admin: Admin = Depends(get_current_admin)
+) -> Admin:
+    """Verify the admin is a super admin"""
+    if not current_admin.is_super_admin():
+        raise HTTPException(
+            status_code=403,
+            detail="Super admin access required"
+        )
+    return current_admin
+
+@router.get("/me")
+async def get_current_admin_info(
+    current_admin: Admin = Depends(get_current_admin)
 ):
-    """Only existing super admins can create new admins"""
+    """Get current admin information"""
+    return {
+        "id": current_admin.id,
+        "email": current_admin.email,
+        "username": current_admin.username,
+        "full_name": current_admin.full_name,
+        "role": current_admin.role,
+        "status": current_admin.status,
+        "initials": current_admin.get_initials(),
+        "is_super_admin": current_admin.is_super_admin(),
+        "created_at": current_admin.created_at,
+        "approved_at": current_admin.approved_at
+    }
+
+# Admin Registration (Open to everyone, but requires super admin approval)
+@router.post("/register", response_model=AdminOut)
+async def register_admin(
+    admin: AdminCreate,
+    db: Session = Depends(get_db)
+):
+    """Register a new admin (requires super admin approval)"""
     if db.query(Admin).filter(Admin.email == admin.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
     
     hashed_password = pwd_context.hash(admin.password)
     db_admin = Admin(
         email=admin.email,
+        username=admin.username,
         full_name=admin.full_name,
-        hashed_password=hashed_password
+        hashed_password=hashed_password,
+        role=admin.role,
+        status="pending"  # All new admins start as pending
     )
     db.add(db_admin)
     db.commit()
     db.refresh(db_admin)
+    
+    # Add initials for response
+    db_admin.initials = db_admin.get_initials()
+    
+    return db_admin
+
+# Super Admin creates other admins directly (approved by default)
+@router.post("/create", response_model=AdminOut)
+async def create_admin(
+    admin: AdminCreate,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_super_admin)
+):
+    """Super admin creates new admin accounts"""
+    if db.query(Admin).filter(Admin.email == admin.email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    hashed_password = pwd_context.hash(admin.password)
+    db_admin = Admin(
+        email=admin.email,
+        username=admin.username,
+        full_name=admin.full_name,
+        hashed_password=hashed_password,
+        role=admin.role,
+        status="approved",  # Auto-approved when created by super admin
+        approved_by=current_admin.id,
+        approved_at=datetime.utcnow()
+    )
+    db.add(db_admin)
+    db.commit()
+    db.refresh(db_admin)
+    
+    # Add initials for response
+    db_admin.initials = db_admin.get_initials()
+    
     return db_admin
 
 @router.post("/login")
@@ -90,7 +169,7 @@ async def admin_login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
-    """Admin login endpoint"""
+    """Admin login endpoint - no OTP required"""
     admin = db.query(Admin).filter(Admin.email == form_data.username).first()
     if not admin or not pwd_context.verify(form_data.password, admin.hashed_password):
         raise HTTPException(
@@ -98,15 +177,194 @@ async def admin_login(
             detail="Incorrect email or password"
         )
     
+    if not admin.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin account is inactive"
+        )
+    
+    if not admin.is_approved():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin account is pending approval"
+        )
+    
     # Create access token
     access_token = create_access_token(data={"sub": admin.email})
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token, 
+        "token_type": "bearer",
+        "admin": {
+            "id": admin.id,
+            "email": admin.email,
+            "full_name": admin.full_name,
+            "role": admin.role,
+            "initials": admin.get_initials()
+        }
+    }
 
+# Admin Management (Super Admin Only)
+@router.get("/management/admins")
+async def get_all_admins(
+    skip: int = 0,
+    limit: int = 100,
+    status_filter: str = None,
+    role_filter: str = None,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_super_admin)
+):
+    """Get all admins with filtering options - Super Admin only"""
+    query = db.query(Admin)
+    
+    if status_filter:
+        query = query.filter(Admin.status == status_filter)
+    if role_filter:
+        query = query.filter(Admin.role == role_filter)
+    
+    admins = query.offset(skip).limit(limit).all()
+    
+    # Add initials to each admin
+    for admin in admins:
+        admin.initials = admin.get_initials()
+    
+    return admins
+
+@router.get("/management/admins/pending")
+async def get_pending_admins(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_super_admin)
+):
+    """Get all pending admin approvals - Super Admin only"""
+    admins = db.query(Admin).filter(
+        Admin.status == "pending"
+    ).offset(skip).limit(limit).all()
+    
+    # Add initials to each admin
+    for admin in admins:
+        admin.initials = admin.get_initials()
+    
+    return admins
+
+@router.post("/management/admins/{admin_id}/approve")
+async def approve_admin(
+    admin_id: int,
+    action: str,  # "approve", "reject", "suspend"
+    notes: str = None,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_super_admin)
+):
+    """Approve, reject, or suspend an admin account - Super Admin only"""
+    admin = db.query(Admin).filter(Admin.id == admin_id).first()
+    if not admin:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    
+    if action == "approve":
+        admin.status = "approved"
+        admin.approved_by = current_admin.id
+        admin.approved_at = datetime.utcnow()
+        admin.is_active = True
+    elif action == "reject":
+        admin.status = "rejected"
+        admin.is_active = False
+    elif action == "suspend":
+        admin.status = "suspended"
+        admin.is_active = False
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action")
+    
+    admin.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(admin)
+    
+    # Add initials for response
+    admin.initials = admin.get_initials()
+    
+    return {
+        "message": f"Admin {action}d successfully",
+        "admin": admin
+    }
+
+@router.put("/management/admins/{admin_id}")
+async def update_admin(
+    admin_id: int,
+    admin_update: AdminUpdate,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_super_admin)
+):
+    """Update admin details - Super Admin only"""
+    admin = db.query(Admin).filter(Admin.id == admin_id).first()
+    if not admin:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    
+    # Update fields if provided
+    update_data = admin_update.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(admin, field, value)
+    
+    admin.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(admin)
+    
+    # Add initials for response
+    admin.initials = admin.get_initials()
+    
+    return admin
+
+@router.delete("/management/admins/{admin_id}")
+async def delete_admin(
+    admin_id: int,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_super_admin)
+):
+    """Delete an admin account - Super Admin only"""
+    admin = db.query(Admin).filter(Admin.id == admin_id).first()
+    if not admin:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    
+    if admin.id == current_admin.id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    
+    if admin.is_super_admin():
+        raise HTTPException(status_code=400, detail="Cannot delete super admin accounts")
+    
+    db.delete(admin)
+    db.commit()
+    
+    return {"message": "Admin deleted successfully"}
+
+@router.get("/management/stats")
+async def get_admin_management_stats(
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_super_admin)
+):
+    """Get admin management statistics - Super Admin only"""
+    total_admins = db.query(Admin).count()
+    pending_admins = db.query(Admin).filter(Admin.status == "pending").count()
+    approved_admins = db.query(Admin).filter(Admin.status == "approved").count()
+    suspended_admins = db.query(Admin).filter(Admin.status == "suspended").count()
+    rejected_admins = db.query(Admin).filter(Admin.status == "rejected").count()
+    
+    super_admins = db.query(Admin).filter(Admin.role == "super_admin").count()
+    regular_admins = db.query(Admin).filter(Admin.role == "admin").count()
+    moderators = db.query(Admin).filter(Admin.role == "moderator").count()
+    
+    return {
+        "total_admins": total_admins,
+        "pending_admins": pending_admins,
+        "approved_admins": approved_admins,
+        "suspended_admins": suspended_admins,
+        "rejected_admins": rejected_admins,
+        "super_admins": super_admins,
+        "regular_admins": regular_admins,
+        "moderators": moderators
+    }
 # Dashboard Stats
 @router.get("/dashboard/stats")
 async def get_dashboard_stats(
     db: Session = Depends(get_db),
-    super_admin = Depends(get_current_super_admin)
+    current_admin: Admin = Depends(get_current_admin)
 ):
     """Get overall dashboard statistics"""
     total_users = db.query(User).count()
@@ -128,13 +386,19 @@ async def get_dashboard_stats(
         "gym_partners": total_businesses,
         "unread_messages": unread_messages,
         "total_revenue": total_revenue,
-        "active_sessions": active_users  # Use active users as proxy for sessions
+        "active_sessions": active_users,  # Use active users as proxy for sessions
+        "admin_info": {
+            "name": current_admin.full_name,
+            "email": current_admin.email,
+            "role": current_admin.role,
+            "initials": current_admin.get_initials()
+        }
     }
 
 @router.get("/users/stats")
 async def get_users_stats(
     db: Session = Depends(get_db),
-    super_admin = Depends(get_current_super_admin)
+    current_admin: Admin = Depends(get_current_admin)
 ):
     """Get detailed user statistics"""
     total_users = db.query(User).count()
@@ -160,7 +424,7 @@ async def get_users_stats(
 async def get_revenue_stats(
     period: str = "today",
     db: Session = Depends(get_db),
-    super_admin = Depends(get_current_super_admin)
+    current_admin: Admin = Depends(get_current_admin)
 ):
     """Get revenue statistics for specified period"""
     now = datetime.utcnow()
@@ -176,7 +440,7 @@ async def get_revenue_stats(
     
     total_revenue = db.query(func.sum(Payment.amount)).filter(
         Payment.status == "completed",
-        Payment.timestamp >= start_date
+        Payment.created_at >= start_date
     ).scalar() or 0
     
     return {
@@ -204,7 +468,7 @@ async def get_transaction_history(
             "id": transaction.id,
             "amount": transaction.amount,
             "status": transaction.status,
-            "date": transaction.timestamp,
+            "date": transaction.created_at,
             "user_name": user.name if user else "Unknown User",
             "user_email": user.email if user else "unknown@example.com",
             "type": "credit" if transaction.amount > 0 else "debit",
@@ -305,7 +569,7 @@ async def get_user_history(
     for payment in payments:
         activities.append({
             "type": "payment",
-            "date": payment.timestamp,
+            "date": payment.created_at,
             "details": payment.description or "Payment",
             "amount": payment.amount
         })
@@ -321,11 +585,33 @@ async def get_all_users(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    super_admin = Depends(get_current_super_admin)
+    current_admin: Admin = Depends(get_current_admin)
 ):
     """Get all users with their check-ins and token balance"""
     users = db.query(User).offset(skip).limit(limit).all()
-    return users
+    
+    # Add initials to each user
+    result = []
+    for user in users:
+        user_dict = {
+            "id": user.id,
+            "username": user.username,
+            "name": user.name or user.full_name,
+            "full_name": user.full_name,
+            "email": user.email,
+            "phone": user.phone,
+            "phone_number": user.phone_number,
+            "balance": user.balance,
+            "plan": user.plan,
+            "flex_credit": user.flex_credit,
+            "is_active": user.is_active,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+            "initials": user.get_initials()
+        }
+        result.append(user_dict)
+    
+    return result
 
 @router.get("/users/{user_id}/payments")
 async def get_user_payments(
@@ -382,11 +668,31 @@ async def get_all_businesses(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    super_admin = Depends(get_current_super_admin)
+    current_admin: Admin = Depends(get_current_admin)
 ):
     """Get all businesses with their metrics"""
     businesses = db.query(Business).offset(skip).limit(limit).all()
-    return businesses
+    
+    # Add initials and additional data
+    result = []
+    for business in businesses:
+        business_dict = {
+            "id": business.id,
+            "business_name": business.business_name,
+            "name": business.name or business.business_name,
+            "email": business.email,
+            "phone": business.phone,
+            "phone_number": business.phone_number,
+            "address": business.address,
+            "is_active": business.is_active,
+            "created_at": business.created_at,
+            "updated_at": business.updated_at,
+            "balance": business.balance,
+            "initials": business.get_initials()
+        }
+        result.append(business_dict)
+    
+    return result
 
 # Business Performance Metrics
 @router.get("/businesses/{business_id}/performance")
@@ -413,7 +719,7 @@ async def get_business_performance(
     # Get revenue
     revenue = db.query(func.sum(Payment.amount)).filter(
         Payment.business_id == business_id,
-        Payment.timestamp >= start_date
+        Payment.created_at >= start_date
     ).scalar() or 0
 
     return {
@@ -485,7 +791,7 @@ async def get_all_communities(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    super_admin = Depends(get_current_super_admin)
+    current_admin: Admin = Depends(get_current_admin)
 ):
     """Get all communities and their metrics"""
     communities = db.query(Community).offset(skip).limit(limit).all()
@@ -515,17 +821,17 @@ async def get_payment_analytics(
 ):
     """Get payment analytics for specified date range"""
     query = db.query(
-        func.date(Payment.timestamp).label('date'),
+        func.date(Payment.created_at).label('date'),
         func.count().label('count'),
         func.sum(Payment.amount).label('total_amount')
     )
     
     if start_date:
-        query = query.filter(Payment.timestamp >= start_date)
+        query = query.filter(Payment.created_at >= start_date)
     if end_date:
-        query = query.filter(Payment.timestamp <= end_date)
+        query = query.filter(Payment.created_at <= end_date)
     
-    return query.group_by(func.date(Payment.timestamp)).all()
+    return query.group_by(func.date(Payment.created_at)).all()
 
 # Reconciliation
 @router.get("/reconciliation/summary")
@@ -550,7 +856,7 @@ async def daily_reconciliation(
     
     # Get all payments for the day
     payments = db.query(Payment).filter(
-        func.date(Payment.timestamp) == date
+        func.date(Payment.created_at) == date
     ).all()
     
     # Group by business
@@ -590,7 +896,7 @@ async def approve_payment(
 @router.get("/system/health")
 async def get_system_health(
     db: Session = Depends(get_db),
-    super_admin = Depends(get_current_super_admin)
+    current_admin: Admin = Depends(get_current_admin)
 ):
     """Get system health metrics"""
     return {
@@ -993,7 +1299,7 @@ async def get_business_analytics(
     # Get revenue
     revenue = db.query(func.sum(Payment.amount)).filter(
         Payment.business_id == business_id,
-        Payment.timestamp >= start_date,
+        Payment.created_at >= start_date,
         Payment.status == "completed"
     ).scalar() or 0
 
