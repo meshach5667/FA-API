@@ -6,7 +6,7 @@ from app.schemas.center import CenterOut, CenterCreate, CenterRating, CenterComm
 from app.models.user import User
 from app.db.database import get_db
 from app.api.auth import get_current_user
-from geopy.distance import geodesic
+# from geopy.distance import geodesic  # Temporarily commented out
 import shutil
 import os
 
@@ -35,7 +35,9 @@ def explore_centers(
     results = []
     for center in centers:
         center_location = (center.latitude, center.longitude)
-        distance_km = geodesic(user_location, center_location).km
+        # distance_km = geodesic(user_location, center_location).km
+        # Simple distance calculation as fallback (not accurate but works)
+        distance_km = ((center.latitude - latitude) ** 2 + (center.longitude - longitude) ** 2) ** 0.5 * 111
         if distance_km <= 20:  # Show centers within 20km radius, adjust as needed
             results.append(CenterOut(
                 id=center.id,

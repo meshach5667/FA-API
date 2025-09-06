@@ -223,11 +223,24 @@ async def get_all_admins(
     
     admins = query.offset(skip).limit(limit).all()
     
-    # Add initials to each admin
+    # Serialize admin data manually to avoid JSON encoding issues
+    serialized_admins = []
     for admin in admins:
-        admin.initials = admin.get_initials()
+        serialized_admins.append({
+            "id": admin.id,
+            "full_name": admin.full_name,
+            "email": admin.email,
+            "username": admin.username,
+            "role": admin.role,
+            "status": admin.status,
+            "is_active": admin.is_active,
+            "approved_at": admin.approved_at.isoformat() if admin.approved_at else None,
+            "created_at": admin.created_at.isoformat() if admin.created_at else None,
+            "updated_at": admin.updated_at.isoformat() if admin.updated_at else None,
+            "initials": admin.get_initials() if hasattr(admin, 'get_initials') else "AA"
+        })
     
-    return admins
+    return serialized_admins
 
 @router.get("/management/admins/pending")
 async def get_pending_admins(
@@ -241,17 +254,29 @@ async def get_pending_admins(
         Admin.status == "pending"
     ).offset(skip).limit(limit).all()
     
-    # Add initials to each admin
+    # Serialize admin data manually to avoid JSON encoding issues
+    serialized_admins = []
     for admin in admins:
-        admin.initials = admin.get_initials()
+        serialized_admins.append({
+            "id": admin.id,
+            "full_name": admin.full_name,
+            "email": admin.email,
+            "username": admin.username,
+            "role": admin.role,
+            "status": admin.status,
+            "is_active": admin.is_active,
+            "approved_at": admin.approved_at.isoformat() if admin.approved_at else None,
+            "created_at": admin.created_at.isoformat() if admin.created_at else None,
+            "updated_at": admin.updated_at.isoformat() if admin.updated_at else None,
+            "initials": admin.get_initials() if hasattr(admin, 'get_initials') else "AA"
+        })
     
-    return admins
+    return serialized_admins
 
 @router.post("/management/admins/{admin_id}/approve")
 async def approve_admin(
     admin_id: int,
-    action: str,  # "approve", "reject", "suspend"
-    notes: str = None,
+    request_data: dict,
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_super_admin)
 ):
@@ -259,6 +284,9 @@ async def approve_admin(
     admin = db.query(Admin).filter(Admin.id == admin_id).first()
     if not admin:
         raise HTTPException(status_code=404, detail="Admin not found")
+    
+    action = request_data.get("action")
+    notes = request_data.get("notes")
     
     if action == "approve":
         admin.status = "approved"
@@ -278,12 +306,21 @@ async def approve_admin(
     db.commit()
     db.refresh(admin)
     
-    # Add initials for response
-    admin.initials = admin.get_initials()
-    
     return {
         "message": f"Admin {action}d successfully",
-        "admin": admin
+        "admin": {
+            "id": admin.id,
+            "full_name": admin.full_name,
+            "email": admin.email,
+            "username": admin.username,
+            "role": admin.role,
+            "status": admin.status,
+            "is_active": admin.is_active,
+            "approved_at": admin.approved_at.isoformat() if admin.approved_at else None,
+            "created_at": admin.created_at.isoformat() if admin.created_at else None,
+            "updated_at": admin.updated_at.isoformat() if admin.updated_at else None,
+            "initials": admin.get_initials() if hasattr(admin, 'get_initials') else "AA"
+        }
     }
 
 @router.put("/management/admins/{admin_id}")
@@ -307,10 +344,19 @@ async def update_admin(
     db.commit()
     db.refresh(admin)
     
-    # Add initials for response
-    admin.initials = admin.get_initials()
-    
-    return admin
+    return {
+        "id": admin.id,
+        "full_name": admin.full_name,
+        "email": admin.email,
+        "username": admin.username,
+        "role": admin.role,
+        "status": admin.status,
+        "is_active": admin.is_active,
+        "approved_at": admin.approved_at.isoformat() if admin.approved_at else None,
+        "created_at": admin.created_at.isoformat() if admin.created_at else None,
+        "updated_at": admin.updated_at.isoformat() if admin.updated_at else None,
+        "initials": admin.get_initials() if hasattr(admin, 'get_initials') else "AA"
+    }
 
 @router.delete("/management/admins/{admin_id}")
 async def delete_admin(
@@ -997,7 +1043,25 @@ async def get_groups(
 ):
     """Get all groups"""
     groups = db.query(Group).offset(skip).limit(limit).all()
-    return groups
+    
+    # Serialize groups data manually to avoid JSON encoding issues
+    serialized_groups = []
+    for group in groups:
+        serialized_groups.append({
+            "id": group.id,
+            "name": group.name,
+            "description": group.description,
+            "category": group.category,
+            "is_private": group.is_private,
+            "business_id": group.business_id,
+            "created_by": group.created_by,
+            "member_count": group.member_count,
+            "status": group.status,
+            "created_at": group.created_at.isoformat() if group.created_at else None,
+            "updated_at": group.updated_at.isoformat() if group.updated_at else None
+        })
+    
+    return serialized_groups
 
 @router.post("/groups")
 async def create_group(
@@ -1006,11 +1070,36 @@ async def create_group(
     super_admin = Depends(get_current_super_admin)
 ):
     """Create a new group"""
-    group = Group(**group_data)
+    # Map frontend data to model fields and provide required fields
+    group_create_data = {
+        'name': group_data.get('name'),
+        'description': group_data.get('description'),
+        'category': group_data.get('category', 'general'),
+        'is_private': group_data.get('is_private', False),
+        'business_id': 1,  # Default business ID for admin-created groups
+        'created_by': super_admin.id,
+        'member_count': 0,
+        'status': 'active'
+    }
+    
+    group = Group(**group_create_data)
     db.add(group)
     db.commit()
     db.refresh(group)
-    return group
+    
+    return {
+        "id": group.id,
+        "name": group.name,
+        "description": group.description,
+        "category": group.category,
+        "is_private": group.is_private,
+        "business_id": group.business_id,
+        "created_by": group.created_by,
+        "member_count": group.member_count,
+        "status": group.status,
+        "created_at": group.created_at.isoformat() if group.created_at else None,
+        "updated_at": group.updated_at.isoformat() if group.updated_at else None
+    }
 
 @router.get("/groups/{group_id}")
 async def get_group_details(
@@ -1022,7 +1111,20 @@ async def get_group_details(
     group = db.query(Group).filter(Group.id == group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-    return group
+    
+    return {
+        "id": group.id,
+        "name": group.name,
+        "description": group.description,
+        "category": group.category,
+        "is_private": group.is_private,
+        "business_id": group.business_id,
+        "created_by": group.created_by,
+        "member_count": group.member_count,
+        "status": group.status,
+        "created_at": group.created_at.isoformat() if group.created_at else None,
+        "updated_at": group.updated_at.isoformat() if group.updated_at else None
+    }
 
 @router.put("/groups/{group_id}")
 async def update_group(
@@ -1041,7 +1143,20 @@ async def update_group(
     
     db.commit()
     db.refresh(group)
-    return group
+    
+    return {
+        "id": group.id,
+        "name": group.name,
+        "description": group.description,
+        "category": group.category,
+        "is_private": group.is_private,
+        "business_id": group.business_id,
+        "created_by": group.created_by,
+        "member_count": group.member_count,
+        "status": group.status,
+        "created_at": group.created_at.isoformat() if group.created_at else None,
+        "updated_at": group.updated_at.isoformat() if group.updated_at else None
+    }
 
 @router.delete("/groups/{group_id}")
 async def delete_group(
@@ -1066,7 +1181,18 @@ async def create_community(
     super_admin = Depends(get_current_super_admin)
 ):
     """Create a new community"""
-    community = Community(**community_data)
+    # Map frontend data to model fields
+    community_create_data = {
+        'name': community_data.get('name'),
+        'description': community_data.get('description'),
+        'category': community_data.get('category'),
+        'image': community_data.get('image'),
+        'is_public': not community_data.get('is_private', False),  # Convert is_private to is_public
+        'creator_id': super_admin.id,  # Set the creator
+        'members': 0  # Initialize member count
+    }
+    
+    community = Community(**community_create_data)
     db.add(community)
     db.commit()
     db.refresh(community)

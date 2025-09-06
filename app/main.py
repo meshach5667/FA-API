@@ -58,6 +58,7 @@ app.include_router(rewards.router, prefix="/rewards", tags=["Rewards"])
 app.include_router(members.router, prefix="/members", tags=["Members"])
 app.include_router(admin.router, prefix="/admin", tags=["SuperAdmin"])
 app.include_router(advertisements.router, prefix="/admin/advertisements", tags=["Advertisements"])
+app.include_router(analytics.router, prefix="/admin/analytics", tags=["Admin Analytics"])
 
 app.include_router(payment.router, prefix="/payment", tags=["Payment"])
 app.include_router(reconciliation.router, prefix="/reconciliation", tags=["Reconciliation"])

@@ -8,11 +8,17 @@ class CommunityBase(BaseModel):
     business_id: int
     max_members: Optional[int] = None
 
-class CommunityOut(CommunityBase):
+class CommunityOut(BaseModel):
     id: int
-    member_count: int
+    name: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    image: Optional[str] = None
+    members: int = 0
+    is_public: bool = True
     created_at: datetime
-    is_active: bool = True
+    creator_id: Optional[int] = None
+    center_id: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 

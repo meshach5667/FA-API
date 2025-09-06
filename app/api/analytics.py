@@ -265,3 +265,95 @@ def get_business_metrics(
         query = query.filter(BusinessMetrics.date <= date_to)
     
     return query.order_by(BusinessMetrics.date.desc()).all()
+
+# Admin Analytics Endpoints
+@router.get("/checkins")
+def get_checkin_analytics(
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Get check-in analytics for admin dashboard"""
+    try:
+        from app.models.check_in import CheckIn
+        
+        # Build query for check-ins
+        query = db.query(CheckIn)
+        
+        if start_date:
+            start_dt = datetime.fromisoformat(start_date)
+            query = query.filter(CheckIn.created_at >= start_dt)
+        if end_date:
+            end_dt = datetime.fromisoformat(end_date)
+            query = query.filter(CheckIn.created_at <= end_dt)
+        
+        checkins = query.all()
+        
+        # Group by date for analytics
+        checkin_data = []
+        for checkin in checkins[:100]:  # Limit results for performance
+            checkin_data.append({
+                "id": checkin.id,
+                "user_id": checkin.user_id,
+                "business_id": checkin.business_id,
+                "date": checkin.created_at.isoformat() if checkin.created_at else None
+            })
+        
+        return {
+            "total_checkins": len(checkins),
+            "checkins": checkin_data
+        }
+    except Exception as e:
+        return {
+            "total_checkins": 0,
+            "checkins": [],
+            "error": str(e)
+        }
+
+@router.get("/payments") 
+def get_payment_analytics(
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Get payment analytics for admin dashboard"""
+    try:
+        from app.models.member import MemberPayment
+        
+        # Build query for payments
+        query = db.query(MemberPayment)
+        
+        if start_date:
+            start_dt = datetime.fromisoformat(start_date)
+            query = query.filter(MemberPayment.payment_date >= start_dt)
+        if end_date:
+            end_dt = datetime.fromisoformat(end_date)
+            query = query.filter(MemberPayment.payment_date <= end_dt)
+        
+        payments = query.all()
+        
+        # Format payment data
+        payment_data = []
+        for payment in payments[:100]:  # Limit results for performance
+            payment_data.append({
+                "id": payment.id,
+                "amount": float(payment.amount),
+                "member_id": payment.member_id,
+                "date": payment.payment_date.isoformat() if payment.payment_date else None,
+                "payment_method": getattr(payment, 'payment_method', 'unknown')
+            })
+        
+        total_revenue = sum(float(p.amount) for p in payments)
+        
+        return {
+            "total_payments": len(payments),
+            "total_revenue": total_revenue,
+            "payments": payment_data
+        }
+    except Exception as e:
+        return {
+            "total_payments": 0,
+            "total_revenue": 0,
+            "payments": [],
+            "error": str(e)
+        }
